@@ -18,6 +18,9 @@ where
 pub fn is_zero_u8(v: &u8) -> bool {
     *v == 0
 }
+pub fn is_two_u8(v: &u8) -> bool {
+    *v == 2
+}
 pub fn is_zero_u16(v: &u16) -> bool {
     *v == 0
 }
