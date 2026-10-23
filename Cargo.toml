@@ -5,3 +5,7 @@ edition = "2021"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+flate2 = "1"
+snap = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+libloading = "0.8"

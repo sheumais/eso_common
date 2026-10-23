@@ -1,5 +1,19 @@
-use std::io::{self, Read, Seek, SeekFrom};
+pub mod block;
+pub mod csv;
+pub mod dat;
+pub mod error;
+pub mod file;
+pub mod granny;
+pub mod lang;
+pub mod log;
+pub mod mnf;
+pub mod oodle;
+pub mod riff;
+pub mod subfile;
+pub mod util;
+pub mod zosft;
 
+use std::io::{self, Read, Seek, SeekFrom};
 use serde::ser::SerializeSeq;
 use serde::Serializer;
 
