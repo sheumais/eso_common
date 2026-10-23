@@ -69,6 +69,13 @@ pub struct MnfFileEntry {
     pub zosft_index: Option<usize>,
 }
 
+impl MnfFileEntry {
+    /// The real file index: `unknown1` is an offset that is added to `file_index`.
+    pub fn true_index(&self) -> u32 {
+        self.file_index.wrapping_add(self.unknown1)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MnfExportOptions {
     pub mnf_filename: String,
@@ -80,7 +87,7 @@ pub struct MnfExportOptions {
     pub mnf_end_index: i32,
     pub archive_index: i32,
     pub begin_archive_index: i32,
-    pub mnf_file_index: i32,
+    pub mnf_file_indices: Vec<u32>,
 
     pub convert_dds: bool,
     pub skip_sub_files: bool,
@@ -140,11 +147,14 @@ impl SaveSubFileOptions {
 /// # Safety
 /// `items` must be null or point to `count` valid item pointers.
 unsafe fn first_name<T>(count: i32, items: *mut *mut T, name: impl Fn(&T) -> *mut std::ffi::c_char) -> String {
-    if count > 0 && !items.is_null() && !(*items).is_null() {
-        granny::cstr_lossy(name(&**items))
-    } else {
-        String::new()
+    if count > 0 && !items.is_null() {
+        // Granny packs its structures on 4-byte boundaries, so the pointer array may not be 8-aligned.
+        let first = std::ptr::read_unaligned(items);
+        if !first.is_null() {
+            return granny::cstr_lossy(name(&*first));
+        }
     }
+    String::new()
 }
 
 fn failed(msg: &str) -> EsoError {
@@ -301,7 +311,7 @@ impl MnfFile {
         print_log!("File Index Count = {}", self.file_table.len());
         for (i, e) in self.file_table.iter().enumerate() {
             self.hash_map.insert(e.hash, i);
-            self.index_map.insert(e.file_index, i);
+            self.index_map.insert(e.true_index(), i);
             self.internal_index_map.insert(e.index, i);
         }
     }
@@ -432,14 +442,11 @@ impl MnfFile {
     }
 
     pub fn link_to_zosft(&mut self, zosft: &mut ZosftFile) {
-        let is_eso_mnf = string_ends_with(&self.filename, "eso.mnf");
         let mut found = 0usize;
         print_log!("Looking up all MNF entries in given ZOSFT file...");
 
         for e in &mut self.file_table {
-            // Skip entries with a non-zero Unknown1 for ESO.mnf files
-            if is_eso_mnf && e.unknown1 != 0 { continue; }
-            if let Some(zi) = zosft.lookup_index(e.file_index) {
+            if let Some(zi) = zosft.lookup_index(e.true_index()) {
                 zosft.file_table[zi].user_data += 1;
                 e.zosft_index = Some(zi);
                 found += 1;
@@ -573,7 +580,7 @@ impl MnfFile {
         let n = match oodle_decompress(info.file_bytes(), &mut out, entry.size as usize) {
             Ok(n) => n,
             Err(_) => {
-                print_debug!("\t{}: Warning: Failed to decompress V3 data file!", entry.file_index);
+                print_debug!("\t{}: Warning: Failed to decompress V3 data file!", entry.true_index());
                 return false;
             }
         };
@@ -651,8 +658,8 @@ impl MnfFile {
             return self.extract_specific_file(&opts.extract_filename, opts);
         }
 
-        if opts.mnf_file_index > 0 {
-            return self.save_sub_file_by_index(opts.mnf_file_index as usize, opts);
+        if !opts.mnf_file_indices.is_empty() {
+            return self.save_sub_files_by_index(&opts.mnf_file_indices, opts);
         }
         self.save_sub_files(opts)
     }
@@ -869,10 +876,10 @@ impl MnfFile {
         if self.read_data_file(e, &mut info, file).is_err() {
             // Special case for the first MNF file with known data truncation issues
             if e.archive_index == 0 && e.index >= 880 {
-                print_debug!("\tError: Failed to load the file data from MNF {:03} with file index {} (absolute index {})!", e.archive_index, e.file_index, e.index);
+                print_debug!("\tError: Failed to load the file data from MNF {:03} with file index {} (absolute index {})!", e.archive_index, e.true_index(), e.index);
                 return Err(eso_error!("\tWarning: Failed to load subfile {} from the end of MNF 000 due to a truncated file (this is a known issue with this file)!", e.index));
             }
-            return Err(eso_error!("\tError: Failed to load the file data from MNF {:03} with file index {} (absolute index {})!", e.archive_index, e.file_index, e.index));
+            return Err(eso_error!("\tError: Failed to load the file data from MNF {:03} with file index {} (absolute index {})!", e.archive_index, e.true_index(), e.index));
         }
 
         if !info.has_file_data() {
@@ -997,6 +1004,57 @@ impl MnfFile {
         print_error!("Saving file index {} (0x{:08X}) from MNF file...", file_index, file_index);
         print_error!("Saving data to '{}'...", opts.output_path);
         self.save_sub_file(&self.file_table[i], &opts.output_path, opts.convert_dds, None, &SaveSubFileOptions::from_export(opts))
+    }
+
+    /// Exports several files by (true) file index. The MNF and ZOSFT are already loaded once by `export`;
+    /// the files are read in archive/offset order, reusing one open DAT handle per archive.
+    pub fn save_sub_files_by_index(&self, indices: &[u32], opts: &MnfExportOptions) -> Result<()> {
+        let start_time = get_timer_ms();
+        let mut seen = std::collections::HashSet::new();
+        let mut found: Vec<(u32, usize)> = Vec::with_capacity(indices.len());
+        let mut missing = 0usize;
+
+        for &idx in indices {
+            if !seen.insert(idx) { continue; }
+            match self.index_map.get(&idx) {
+                Some(&i) => found.push((idx, i)),
+                None => {
+                    missing += 1;
+                    print_error!("Failed to find the file with index {} (0x{:08X}) in MNF file!", idx, idx);
+                }
+            }
+        }
+
+        found.sort_by_key(|&(_, i)| (self.file_table[i].archive_index, self.file_table[i].offset));
+        print_error!("Saving {} file indices from MNF file to '{}'...", found.len(), opts.output_path);
+
+        let sub_opts = SaveSubFileOptions::from_export(opts);
+        let mut input = CFile::new();
+        let mut last_archive: Option<u8> = None;
+        let mut dat_ok = false;
+        let mut success = 0usize;
+
+        for &(idx, i) in &found {
+            let entry = self.file_table[i];
+
+            if last_archive != Some(entry.archive_index) {
+                last_archive = Some(entry.archive_index);
+                input.close();
+                let name = self.create_data_filename(entry.archive_index);
+                dat_ok = input.open(&name, "rb").is_ok() && input.size() > 14;
+                if !dat_ok { print_error!("Error: Failed to open or empty DAT '{}'...", name); }
+            }
+            if !dat_ok { continue; }
+
+            print_debug!("Saving file index {} (0x{:08X})...", idx, idx);
+            if self.save_sub_file(&entry, &opts.output_path, opts.convert_dds, Some(&mut input), &sub_opts).is_ok() {
+                success += 1;
+            }
+        }
+
+        let total = found.len() + missing;
+        print_error!("Successfully exported {} of {} files in {:.2} secs!", success, total, (get_timer_ms() - start_time) / 1000.0);
+        if success == total { Ok(()) } else { Err(failed("some files could not be exported")) }
     }
 
     fn sorted_indices(&self) -> Vec<usize> {
@@ -1180,9 +1238,10 @@ mod tests {
         assert_eq!(t.len(), 2);
         assert_eq!((t[0].id1, t[1].id1), (0x8000_0001, 0x8000_0002));
         assert_eq!((t[0].file_index, t[1].file_index, t[1].unknown1), (11, 22, 1));
+        assert_eq!(t[1].true_index(), 23);
         assert_eq!((t[0].compress_type, t[0].archive_index), (2, 7));
         assert_eq!(m.hash_map[&0xBBBB], 1);
-        assert_eq!(m.index_map[&22], 1);
+        assert_eq!(m.index_map[&23], 1);
     }
 
     #[test]

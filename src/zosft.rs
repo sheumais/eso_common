@@ -40,7 +40,7 @@ pub struct ZosftFileEntry {
     pub filename: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ZosftFile {
     header: ZosftHeader,
     footer: [u8; ZOSFT_FOOTER_MAGICSIZE],
@@ -308,6 +308,21 @@ impl ZosftFile {
     pub fn set_block(&mut self, i: usize, block: MnfBlock) { self.blocks[i] = block; }
     pub fn set_raw_file_data(&mut self, data: Vec<u8>) { self.raw_file_data = data; }
     pub fn set_record_count(&mut self, n: u32) { self.header.record_count = n; }
+}
+
+impl Default for ZosftFile {
+    fn default() -> Self {
+        Self {
+            header: ZosftHeader::default(),
+            footer: [0; ZOSFT_FOOTER_MAGICSIZE],
+            raw_file_data: Vec::new(),
+            filenames: Vec::new(),
+            blocks: std::array::from_fn(|_| MnfBlock::new_block3(true, true)),
+            file_table: Vec::new(),
+            file_index_map: HashMap::new(),
+            mnf_version: 0,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-//! Port of granny.h: `#[repr(C)]` mirrors of the Granny2 (GR2) structures plus a runtime loader for
+//! Port of granny.h: `#[repr(C, packed(4))]` mirrors of the Granny2 (GR2) structures plus a runtime loader for
 //! the exported functions.
 //!
 //! Notes:
@@ -24,15 +24,15 @@ pub type granny_int32 = i32;
 pub type granny_uint32 = u32;
 pub type granny_real32 = f32;
 
-#[repr(C)] #[derive(Clone, Copy)] pub struct Granny_Int16_t { pub Int16: granny_int16 }
-#[repr(C)] #[derive(Clone, Copy)] pub struct Granny_Int32_t { pub Int32: granny_int32 }
-#[repr(C)] #[derive(Clone, Copy)] pub struct Granny_Real_t { pub Real32: granny_real32 }
+#[repr(C, packed(4))] #[derive(Clone, Copy)] pub struct Granny_Int16_t { pub Int16: granny_int16 }
+#[repr(C, packed(4))] #[derive(Clone, Copy)] pub struct Granny_Int32_t { pub Int32: granny_int32 }
+#[repr(C, packed(4))] #[derive(Clone, Copy)] pub struct Granny_Real_t { pub Real32: granny_real32 }
 
 /// "is this correct ?" - kept from the header.
-#[repr(C)] #[derive(Clone, Copy)]
+#[repr(C, packed(4))] #[derive(Clone, Copy)]
 pub struct granny_transform { pub a: f32, pub b: [f32; 3], pub c: [f32; 4], pub d: [[f32; 3]; 3] }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct StringMember_t {
     pub Type: granny_int32,
     pub Name: *mut c_char,
@@ -41,7 +41,7 @@ pub struct StringMember_t {
     pub x: [i32; 4],
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct ArtToolInfo_t {
     pub FromArtToolName: *mut c_char,
     pub ArtToolMajorRevision: granny_int32,
@@ -54,7 +54,7 @@ pub struct ArtToolInfo_t {
     pub ExtendedData: *mut c_void,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct ExporterInfo_t {
     pub ExporterName: *mut c_char,
     pub ExporterMajorRevision: granny_int32,
@@ -63,29 +63,29 @@ pub struct ExporterInfo_t {
     pub ExporterBuildNumber: granny_int32,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Layout_t {
     pub BytesPerPixel: granny_int32,
     pub ShiftForComponent: [granny_int32; 4],
     pub BitsForComponent: [granny_int32; 4],
 }
 
-#[repr(C)] pub struct PixelByte_t { pub UInt8: granny_uint8 }
+#[repr(C, packed(4))] pub struct PixelByte_t { pub UInt8: granny_uint8 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct MIPLevel_t {
     pub Stride: granny_int32,
     pub nPixelBytes: granny_int32,
     pub PixelBytes: *mut PixelByte_t,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Image_t {
     pub nMIPLevels: granny_int32,
     pub MIPLevels: *mut MIPLevel_t,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Texture_t {
     pub FromFileName: *mut c_char,
     pub TextureType: granny_int32,
@@ -99,13 +99,13 @@ pub struct Texture_t {
     pub ExtendedData: *mut c_void,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Maps_t {
     pub Usage: *mut c_char,
     pub Map: *mut Material_t,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Material_t {
     pub Name: *mut c_char,
     pub nMaps: granny_int32,
@@ -115,7 +115,7 @@ pub struct Material_t {
 }
 
 /// "better not use it as it is not known if granny_transform is correct"
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Bone_t {
     pub Name: *mut c_char,
     pub ParentIndex: granny_int32,
@@ -125,7 +125,7 @@ pub struct Bone_t {
     pub ExtendedData: *mut c_void,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Skeleton_t {
     pub Name: *mut c_char,
     pub nBones: granny_int32,
@@ -133,10 +133,10 @@ pub struct Skeleton_t {
     pub LODType: granny_int32,
 }
 
-#[repr(C)] pub struct VertexComponentName_t { pub String: *mut c_char }
+#[repr(C, packed(4))] pub struct VertexComponentName_t { pub String: *mut c_char }
 pub type VertexAnnotationIndex_t = Granny_Int32_t;
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct VertexAnnotationSet_t {
     pub Name: *mut c_char,
     pub nVertexAnnotations: granny_int32,
@@ -145,7 +145,7 @@ pub struct VertexAnnotationSet_t {
     pub VertexAnnotationIndices: *mut VertexAnnotationIndex_t,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct VertexData_t {
     pub Vertices_strings: *mut StringMember_t,
     pub nVertices: granny_int32,
@@ -156,7 +156,7 @@ pub struct VertexData_t {
     pub VertexAnnotationSets: *mut VertexAnnotationSet_t,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Group_t {
     pub MaterialIndex: granny_int32,
     pub TriFirst: granny_int32,
@@ -165,7 +165,7 @@ pub struct Group_t {
 
 pub type TriAnnotationIndex_t = Granny_Int32_t;
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct TriAnnotationSet_t {
     pub Name: *mut c_char,
     pub nTriAnnotations: granny_int32,
@@ -182,7 +182,7 @@ pub type SideToNeighborMap_t = Granny_Int32_t;
 pub type BonesForTriangle_t = Granny_Int32_t;
 pub type TriangleToBoneIndex_t = Granny_Int32_t;
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct TriTopology_t {
     pub nGroups: granny_int32,
     pub Groups: *mut Group_t,
@@ -204,17 +204,17 @@ pub struct TriTopology_t {
     pub TriAnnotationSets: *mut TriAnnotationSet_t,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct MorphTarget_t {
     pub ScalarName: *mut c_char,
     pub VertexData: *mut VertexData_t,
 }
 
-#[repr(C)] pub struct MaterialBinding_t { pub Material: *mut Material_t }
+#[repr(C, packed(4))] pub struct MaterialBinding_t { pub Material: *mut Material_t }
 
 pub type TriangleIndex_t = Granny_Int32_t;
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct BoneBinding_t {
     pub BoneName: *mut c_char,
     pub OBBMin: [granny_real32; 3],
@@ -223,7 +223,7 @@ pub struct BoneBinding_t {
     pub TriangleIndices: *mut TriangleIndex_t,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Mesh_t {
     pub Name: *mut c_char,
     pub PrimaryVertexData: *mut VertexData_t,
@@ -237,9 +237,9 @@ pub struct Mesh_t {
     pub ExtendedData: *mut c_void,
 }
 
-#[repr(C)] pub struct MeshBinding_t { pub Mesh: *mut Mesh_t }
+#[repr(C, packed(4))] pub struct MeshBinding_t { pub Mesh: *mut Mesh_t }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Model_t {
     pub Name: *mut c_char,
     pub Skeleton: *mut Skeleton_t,
@@ -250,12 +250,12 @@ pub struct Model_t {
 
 pub type VectorTrack_t = c_void; // unknown
 
-#[repr(C)] pub struct CurveDataHeader_t { pub Format: granny_uint8, pub Degree: granny_uint8 }
+#[repr(C, packed(4))] pub struct CurveDataHeader_t { pub Format: granny_uint8, pub Degree: granny_uint8 }
 
 pub type Knot_t = Granny_Real_t;
 pub type Control_t = Granny_Real_t;
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct CurveData_t {
     pub CurveDataHeader_DaK32fC32f_t: CurveDataHeader_t,
     pub Padding: granny_int16,
@@ -265,13 +265,13 @@ pub struct CurveData_t {
     pub Controls: *mut Control_t,
 }
 
-#[repr(C)] pub struct Curve_t { pub CurveData: CurveData_t }
+#[repr(C, packed(4))] pub struct Curve_t { pub CurveData: CurveData_t }
 
 pub type OrientationCurve_t = Curve_t;
 pub type PositionCurve_t = Curve_t;
 pub type ScaleShearCurve_t = Curve_t;
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct TransformTrack_t {
     pub Name: *mut c_char,
     pub Flags: granny_int32,
@@ -282,16 +282,16 @@ pub struct TransformTrack_t {
 
 pub type TransformLODTrack_t = c_void; // unknown
 
-#[repr(C)] pub struct Entry_t { pub TimeStamp: granny_real32, pub Text: *mut c_char }
+#[repr(C, packed(4))] pub struct Entry_t { pub TimeStamp: granny_real32, pub Text: *mut c_char }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct TextTrack_t {
     pub Name: *mut c_char,
     pub nEntries: granny_int32,
     pub Entries: *mut Entry_t,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct PeriodicLoop_t {
     pub Radius: granny_real32,
     pub dAngle: granny_real32,
@@ -303,7 +303,7 @@ pub struct PeriodicLoop_t {
 
 pub type RootMotion_t = c_void; // unknown
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct TrackGroup_t {
     pub Name: *mut c_char,
     pub nVectorTracks: granny_int32,
@@ -322,7 +322,7 @@ pub struct TrackGroup_t {
     pub ExtendedData: *mut c_void,
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Animation_t {
     pub Name: *mut c_char,
     pub Duration: granny_real32,
@@ -332,7 +332,7 @@ pub struct Animation_t {
     pub TrackGroups: *mut *mut TrackGroup_t, // VariantReferenceMember
 }
 
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct FileInfo_t {
     pub ArtToolInfo: *mut ArtToolInfo_t,
     pub ExporterInfo: *mut ExporterInfo_t,
