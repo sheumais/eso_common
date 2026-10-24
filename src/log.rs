@@ -17,6 +17,7 @@ type LogCallback = Box<dyn Fn(&str) + Send + Sync>;
 static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
 static LOG_CALLBACK: Mutex<Option<LogCallback>> = Mutex::new(None);
 static OUTPUT_DEBUG_LOG: AtomicBool = AtomicBool::new(false);
+static CONSOLE_ENABLED: AtomicBool = AtomicBool::new(true);
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -31,6 +32,12 @@ pub fn open_log(filename: &str) -> bool {
         }
         Err(_) => false,
     }
+}
+
+/// Turns the echo of messages to stdout on or off. The log file and the callback set with
+/// [`set_log_callback`] are unaffected. Enabled by default.
+pub fn set_console_enabled(enabled: bool) {
+    CONSOLE_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
 pub fn set_output_debug_log(enabled: bool) {
@@ -56,8 +63,10 @@ fn write_log_line(msg: &str) {
 }
 
 fn console(msg: &str) {
-    println!("{}", msg);
-    let _ = std::io::stdout().flush();
+    if CONSOLE_ENABLED.load(Ordering::Relaxed) {
+        println!("{}", msg);
+        let _ = std::io::stdout().flush();
+    }
     if let Some(cb) = lock(&LOG_CALLBACK).as_ref() {
         cb(msg);
     }

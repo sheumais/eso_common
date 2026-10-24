@@ -115,10 +115,22 @@ impl EsoSubFileDataRecord {
 
     /// Appends the record to a combined file: `"####"`, seven big endian dwords, then the data.
     pub fn save_combined(&self, file: &mut CFile, index: u32) -> Result<()> {
+        let mut buf = Vec::new();
+        self.append_combined(&mut buf, index)?;
+        file.write_bytes(&buf)
+    }
+
+    /// The bytes [`save_combined`](Self::save_combined) would write, appended to `out`.
+    pub fn append_combined(&self, out: &mut Vec<u8>, index: u32) -> Result<()> {
         if self.uncompressed_data.is_empty() {
             return Err(eso_error!("\t\tNo uncompressed data to save!"));
         }
-        file.write_bytes(b"####")?;
+        self.write_combined_unchecked(out, index);
+        Ok(())
+    }
+
+    fn write_combined_unchecked(&self, out: &mut Vec<u8>, index: u32) {
+        out.extend_from_slice(b"####");
         for v in [
             index,
             self.uncompressed_size1,
@@ -128,9 +140,9 @@ impl EsoSubFileDataRecord {
             self.orig_file_offset,
             self.uncompressed_data.len() as u32,
         ] {
-            file.write_u32(v, false)?;
+            out.extend_from_slice(&v.to_be_bytes());
         }
-        file.write_bytes(&self.uncompressed_data)
+        out.extend_from_slice(&self.uncompressed_data);
     }
 }
 
@@ -208,22 +220,30 @@ impl EsoSubFileDataFile {
         Ok(())
     }
 
+    /// The combined layout written by [`save_combined_file`](Self::save_combined_file), in memory:
+    /// the 16 byte header (big endian) followed by every record that has data, numbered by its
+    /// position in `records` (1-based, counting skipped records too).
+    pub fn to_combined_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for v in [self.magic_bytes, self.unknown1, self.num_records, self.unknown2] {
+            out.extend_from_slice(&v.to_be_bytes());
+        }
+        for (i, rec) in self.records.iter().enumerate() {
+            if rec.uncompressed_data.is_empty() {
+                continue; // record failed to decompress
+            }
+            rec.write_combined_unchecked(&mut out, i as u32 + 1);
+        }
+        out
+    }
+
     pub fn save_combined_file(&self, filename: &str) -> Result<()> {
         let mut f = CFile::new();
         f.open(filename, "wb")?;
 
         print_debug!("\t\tSaving uncompressed record data to combined file '{}'...", filename);
 
-        for v in [self.magic_bytes, self.unknown1, self.num_records, self.unknown2] {
-            f.write_u32(v, false)?;
-        }
-
-        for (i, rec) in self.records.iter().enumerate() {
-            if rec.uncompressed_data.is_empty() {
-                continue; // record failed to decompress
-            }
-            rec.save_combined(&mut f, i as u32 + 1)?;
-        }
+        f.write_bytes(&self.to_combined_bytes())?;
         f.close();
         Ok(())
     }
@@ -415,4 +435,28 @@ mod tests {
         assert!(EsoSubFileDataFile::default().parse(&z).is_err());
         assert!(EsoSubFileDataFile::default().parse(&[0u8; 8]).is_err());
     }
+
+
+    #[test]
+    fn to_combined_bytes_matches_the_file_writer() {
+        let mut d = EsoSubFileDataFile::default();
+        // An empty middle record must be skipped but still consume its 1-based number.
+        d.parse(&data_file(&[b"first", b"third record"])).unwrap();
+        d.records.insert(1, EsoSubFileDataRecord::default());
+        d.num_records = 3;
+
+        let path = std::env::temp_dir().join(format!("eso_subfile_mem_{}.bin", std::process::id()));
+        let p = path.to_str().unwrap();
+        d.save_combined_file(p).unwrap();
+        let on_disk = std::fs::read(p).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let in_memory = d.to_combined_bytes();
+        assert_eq!(in_memory, on_disk);
+        assert_eq!(&in_memory[20..24], &be(1));
+        assert!(in_memory.ends_with(b"third record"));
+        // header (16) + record 1 ("####" + 28 + 5 bytes) + record 3 ("####" + 28 + 12 bytes)
+        assert_eq!(in_memory.len(), 16 + (32 + 5) + (32 + 12));
+    }
+
 }

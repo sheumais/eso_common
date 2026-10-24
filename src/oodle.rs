@@ -4,10 +4,11 @@
 //! dynamically.  The exported function is `OodleLZ_Decompress`; the signature below is the public
 //! Oodle 2.x one, but it has not been exercised against a real library yet.
 
-use crate::error::Result;
+use crate::error::{EsoError, Result};
 use crate::{eso_error, print_error, print_log};
 use libloading::Library;
 use std::ffi::c_void;
+use std::path::Path;
 use std::sync::OnceLock;
 
 type OodleLzDecompress = unsafe extern "C" fn(
@@ -32,14 +33,31 @@ const CANDIDATES: &[&str] = &[
     "oo2core_5_win64.dll", "liboo2corelinux64.so.9", "liboo2corelinux64.so",
 ];
 
-/// Tries to load the Oodle library (first from `path` if given, then from the usual names).
+/// The library names to try, in order: `path` first (if given), then the usual names.
+///
+/// If `path` is a directory, each candidate file name is tried inside it, so the game's tool
+/// folder can be passed directly.
+fn candidate_names(path: Option<&str>) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(p) = path {
+        if Path::new(p).is_dir() {
+            names.extend(CANDIDATES.iter().map(|c| Path::new(p).join(c).to_string_lossy().into_owned()));
+        } else {
+            names.push(p.to_string());
+        }
+    }
+    names.extend(CANDIDATES.iter().map(|c| c.to_string()));
+    names
+}
+
+/// Tries to load the Oodle library. `path` may name the library file or a folder containing it;
+/// the usual names are tried afterwards. Returns `false` if no library could be loaded.
 pub fn load_oodle_lib_from(path: Option<&str>) -> bool {
     if OODLE.get().is_some() { return true; }
 
-    let names: Vec<&str> = path.into_iter().chain(CANDIDATES.iter().copied()).collect();
-    for name in names {
+    for name in candidate_names(path) {
         // SAFETY: loading a shared library runs its initialisers; we only load Oodle.
-        let Ok(lib) = (unsafe { Library::new(name) }) else { continue };
+        let Ok(lib) = (unsafe { Library::new(&name) }) else { continue };
         // SAFETY: symbol type matches the documented Oodle 2.x C signature.
         let sym = unsafe { lib.get::<OodleLzDecompress>(b"OodleLZ_Decompress\0") };
         if let Ok(sym) = sym {
@@ -51,6 +69,15 @@ pub fn load_oodle_lib_from(path: Option<&str>) -> bool {
     }
     print_error!("Error: Failed to load the Oodle library (looked for {}).", CANDIDATES.join(", "));
     false
+}
+
+/// Like [`load_oodle_lib_from`], but reports failure as an error value.
+pub fn try_load_oodle_lib_from(path: Option<&str>) -> Result<()> {
+    if load_oodle_lib_from(path) {
+        Ok(())
+    } else {
+        Err(EsoError::new("Oodle library not found; Oodle-compressed entries cannot be read"))
+    }
 }
 
 pub fn load_oodle_lib() -> bool {
@@ -77,4 +104,26 @@ pub fn oodle_decompress(input: &[u8], output: &mut [u8], raw_len: usize) -> Resu
     };
     if n <= 0 { return Err(eso_error!("Error: Oodle failed to decompress the data!")); }
     Ok(n as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_is_expanded_to_candidate_files() {
+        let dir = std::env::temp_dir().join(format!("eso_oodle_dir_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let names = candidate_names(Some(dir.to_str().unwrap()));
+        assert_eq!(names.len(), CANDIDATES.len() * 2, "folder candidates, then the bare names");
+        assert_eq!(Path::new(&names[0]), dir.join(CANDIDATES[0]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn explicit_file_path_is_tried_first() {
+        let names = candidate_names(Some("/opt/game/custom_oodle.so"));
+        assert_eq!(names[0], "/opt/game/custom_oodle.so");
+        assert_eq!(names.len(), CANDIDATES.len() + 1);
+    }
 }

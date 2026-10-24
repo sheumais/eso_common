@@ -161,6 +161,11 @@ fn failed(msg: &str) -> EsoError {
     EsoError::new(msg)
 }
 
+/// The header test `parse_data_file_ver3` uses before attempting Oodle decompression.
+fn looks_oodle_compressed(data: &[u8]) -> bool {
+    data.len() >= 2 && (data[0] == 0x8C || data[0] == 0xCC) && (data[1] == 0x06 || data[1] == 0x0A)
+}
+
 /// `CreateFilename(base, "%03u\\%06u<tail>", archive, index)`
 fn numeric_name(base: &str, archive: u8, index: u32, tail: &str) -> String {
     create_filename(base, &format!("{:03}{}{:06}{}", archive, SEP, index, tail))
@@ -231,7 +236,7 @@ impl MnfFile {
     }
 
     /// Filename (from the ZOSFT) of an entry, if linked and non-empty.
-    fn zosft_name(&self, e: &MnfFileEntry) -> Option<&str> {
+    pub fn zosft_name(&self, e: &MnfFileEntry) -> Option<&str> {
         e.zosft_index.and_then(|i| self.zosft_file.file_table.get(i)).map(|z| z.filename.as_str())
     }
 
@@ -569,10 +574,7 @@ impl MnfFile {
         if !info.has_file_data() { return true; }
 
         {
-            let fd = info.file_bytes();
-            if fd.len() < 2 { return true; }
-            if fd[0] != 0x8C && fd[0] != 0xCC { return true; }
-            if fd[1] != 0x06 && fd[1] != 0x0A { return true; }
+            if !looks_oodle_compressed(info.file_bytes()) { return true; }
         }
         if !self.decompress_oodle { return true; }
 
@@ -608,6 +610,77 @@ impl MnfFile {
 
         info.file_data = header_offset2..n;
         true
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // In-memory reads
+    // -----------------------------------------------------------------------------------------
+
+    /// Reads and decompresses one entry into memory (zlib, snappy or none; Oodle for v3 archives).
+    ///
+    /// `file` is an open DAT for the entry's archive (see [`create_data_filename`](Self::create_data_filename));
+    /// pass `None` to open it for this call. Fails rather than returning the still-compressed bytes
+    /// when an Oodle-compressed entry could not be decompressed (typically because the Oodle
+    /// library is not loaded).
+    pub fn read_entry(&self, e: &MnfFileEntry, file: Option<&mut CFile>) -> Result<Vec<u8>> {
+        let mut info = DatSubFileInfo::default();
+        self.read_data_file(e, &mut info, file)?;
+        if !info.has_file_data() {
+            return Err(failed("entry has no data"));
+        }
+        if self.header.version >= 3 && info.oodle_decompressed.is_none() && looks_oodle_compressed(info.file_bytes()) {
+            return Err(failed("entry is Oodle-compressed but could not be decompressed (is the Oodle library loaded?)"));
+        }
+        Ok(info.file_bytes().to_vec())
+    }
+
+    /// Reads an EsoFileData table entry (the source of the `*_Uncompressed.EsoFileData` exports),
+    /// with its index records attached exactly as the file exports do.
+    pub fn read_eso_file_data(&self, e: &MnfFileEntry) -> Result<EsoSubFileDataFile> {
+        let mut info = DatSubFileInfo::default();
+        self.read_data_file(e, &mut info, None)?;
+        self.extract_sub_file_data(e, "", &info)
+    }
+
+    /// Reads several entries without holding them all in memory: `f` is called once per distinct
+    /// requested index, with its bytes or the reason it could not be read.
+    ///
+    /// `indices` are absolute entry indices (`MnfFileEntry::index`, the position in
+    /// [`file_table`](Self::file_table)). Entries are read in archive/offset order and each DAT is
+    /// opened once, so the cost is one pass over each archive. A failing entry is reported to `f`
+    /// and never stops the batch.
+    pub fn read_entries_each(&self, indices: &[u32], mut f: impl FnMut(u32, Result<Vec<u8>>)) {
+        let mut seen = std::collections::HashSet::new();
+        let mut found: Vec<(u32, usize)> = Vec::with_capacity(indices.len());
+
+        for &idx in indices {
+            if !seen.insert(idx) { continue; }
+            match self.file_table.get(idx as usize) {
+                Some(e) if e.index == idx => found.push((idx, idx as usize)),
+                _ => f(idx, Err(failed(&format!("entry {} is not in the MNF file table", idx)))),
+            }
+        }
+
+        found.sort_by_key(|&(_, i)| (self.file_table[i].archive_index, self.file_table[i].offset));
+
+        let mut input = CFile::new();
+        let mut open_archive: Option<u8> = None;
+        let mut dat_ok = false;
+
+        for (idx, i) in found {
+            let entry = self.file_table[i];
+            if open_archive != Some(entry.archive_index) {
+                open_archive = Some(entry.archive_index);
+                input.close();
+                let name = self.create_data_filename(entry.archive_index);
+                dat_ok = input.open(&name, "rb").is_ok();
+            }
+            if !dat_ok {
+                f(idx, Err(failed("could not open the DAT archive for this entry")));
+                continue;
+            }
+            f(idx, self.read_entry(&entry, Some(&mut input)));
+        }
     }
 
     // -----------------------------------------------------------------------------------------
@@ -1293,4 +1366,59 @@ mod tests {
         assert_eq!(&written[..], &payload[..]);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+
+    fn temp_mnf_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("eso_mnf_{}_{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn read_entry_and_batch_read_in_memory() {
+        let dir = temp_mnf_dir("read");
+        let payload = b"in-memory payload";
+        let mut dat = vec![0u8; 16];
+        dat.extend_from_slice(payload);
+        std::fs::write(dir.join("game0007.dat"), &dat).unwrap();
+
+        let mut m = MnfFile::new();
+        m.filename = dir.join("game.mnf").to_string_lossy().into_owned();
+        // Entry 5 is the payload; the table must satisfy file_table()[i].index == i.
+        m.file_table = (0..6u32)
+            .map(|i| MnfFileEntry { index: i, ..Default::default() })
+            .collect();
+        m.file_table[5] = MnfFileEntry {
+            index: 5, size: payload.len() as u32, compressed_size: payload.len() as u32,
+            offset: 16, compress_type: 0, archive_index: 7, ..Default::default()
+        };
+
+        let e = m.file_table[5];
+        assert_eq!(m.read_entry(&e, None).unwrap(), payload);
+
+        let mut got = Vec::new();
+        m.read_entries_each(&[99, 5, 5], |idx, r| got.push((idx, r.ok())));
+        assert_eq!(got.len(), 2, "duplicates are reported once, missing ones as errors");
+        assert_eq!(got[0].0, 99);
+        assert!(got[0].1.is_none());
+        assert_eq!(got[1], (5, Some(payload.to_vec())));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn oodle_entry_without_library_is_an_error_not_garbage() {
+        let dir = temp_mnf_dir("oodle");
+        // Oodle v3 header (0x8C 0x06) but the library is not loaded in tests.
+        let blob = [0x8C, 0x06, 1, 2, 3, 4, 5, 6];
+        std::fs::write(dir.join("game0001.dat"), [0u8; 16].iter().chain(blob.iter()).copied().collect::<Vec<u8>>()).unwrap();
+
+        let mut m = MnfFile::new();
+        m.header.version = 3;
+        m.filename = dir.join("game.mnf").to_string_lossy().into_owned();
+        let e = MnfFileEntry { index: 0, size: 8, compressed_size: 8, offset: 16, compress_type: 0, archive_index: 1, ..Default::default() };
+        assert!(m.read_entry(&e, None).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
 }
