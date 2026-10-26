@@ -3,10 +3,12 @@ pub mod csv;
 pub mod dat;
 pub mod error;
 pub mod file;
+#[cfg(feature = "native")]
 pub mod granny;
 pub mod lang;
 pub mod log;
 pub mod mnf;
+#[cfg(feature = "native")]
 pub mod oodle;
 pub mod riff;
 pub mod subfile;

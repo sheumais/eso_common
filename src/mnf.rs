@@ -15,8 +15,10 @@ use crate::block::MnfBlock;
 use crate::dat::{read_sub_file_data, DatSubFileInfo};
 use crate::error::{EsoError, Result};
 use crate::file::{BaseFile, CFile, MemoryFile};
+#[cfg(feature = "native")]
 use crate::granny;
 use crate::lang::EsoLangFile;
+#[cfg(feature = "native")]
 use crate::oodle::oodle_decompress;
 use crate::subfile::{EsoSubFileDataFile, EsoSubFileIndexFile};
 use crate::util::*;
@@ -146,6 +148,7 @@ impl SaveSubFileOptions {
 ///
 /// # Safety
 /// `items` must be null or point to `count` valid item pointers.
+#[cfg(feature = "native")]
 unsafe fn first_name<T>(count: i32, items: *mut *mut T, name: impl Fn(&T) -> *mut std::ffi::c_char) -> String {
     if count > 0 && !items.is_null() {
         // Granny packs its structures on 4-byte boundaries, so the pointer array may not be 8-aligned.
@@ -570,6 +573,13 @@ impl MnfFile {
         Ok(())
     }
 
+    /// Without the `native` feature there is no Oodle library, so v3 payloads stay compressed.
+    #[cfg(not(feature = "native"))]
+    fn parse_data_file_ver3(&self, _entry: &MnfFileEntry, _info: &mut DatSubFileInfo) -> bool {
+        false
+    }
+
+    #[cfg(feature = "native")]
     fn parse_data_file_ver3(&self, entry: &MnfFileEntry, info: &mut DatSubFileInfo) -> bool {
         if !info.has_file_data() { return true; }
 
@@ -852,6 +862,7 @@ impl MnfFile {
         data.save_files(&out_path)
     }
 
+    #[cfg(feature = "native")]
     fn save_sub_file_gr2(&self, e: &MnfFileEntry, base_path: &str, info: &DatSubFileInfo) -> Result<()> {
         let id = format!("{:03}{}{:06}.gr2", e.archive_index, SEP, e.index);
 
@@ -914,6 +925,12 @@ impl MnfFile {
         let out_path = remove_filename(&out);
         if !ensure_path_exists(&out_path) { return Err(failed("could not create output path")); }
         Self::write_file(&out, info.file_bytes())
+    }
+
+    /// Without the `native` feature there is no Granny library, so `.gr2` data cannot be inspected or renamed.
+    #[cfg(not(feature = "native"))]
+    fn save_sub_file_gr2(&self, _e: &MnfFileEntry, _base_path: &str, _info: &DatSubFileInfo) -> Result<()> {
+        Err(failed("Granny support is not compiled in (enable the `native` feature)"))
     }
 
     fn save_sub_file_xv4(&self, e: &MnfFileEntry, base_path: &str, convert_dds: bool, info: &DatSubFileInfo) -> Result<()> {
@@ -1226,7 +1243,7 @@ impl MnfFile {
             save_result &= ok;
         }
 
-        print_error!("Successfully exported {} sub-files in {} secs!", success, (get_timer_ms() - start_time) / 1000.0);
+        print_error!("Successfully exported {} sub-files in {:.2} secs!", success, (get_timer_ms() - start_time) / 1000.0);
         if save_result { Ok(()) } else { Err(failed("some sub-files could not be exported")) }
     }
 
@@ -1242,7 +1259,7 @@ impl MnfFile {
             }
             ok &= self.save_sub_file(e, base_path, convert_dds, None, &SaveSubFileOptions::default()).is_ok();
         }
-        print_log!("Exported {} sub-files in {} secs!", self.file_table.len(), (get_timer_ms() - start_time) * 1000.0);
+        print_log!("Exported {} sub-files in {:.2} secs!", self.file_table.len(), (get_timer_ms() - start_time) * 1000.0);
         if ok { Ok(()) } else { Err(failed("some sub-files could not be exported")) }
     }
 
@@ -1269,7 +1286,7 @@ impl MnfFile {
             if r { success += 1; }
             ok &= r;
         }
-        print_debug!("Successfully exported {} sub-files in {} secs!", success, (get_timer_ms() - start_time) / 1000.0);
+        print_debug!("Successfully exported {} sub-files in {:.2} secs!", success, (get_timer_ms() - start_time) / 1000.0);
         if ok { Ok(()) } else { Err(failed("some sub-files could not be exported")) }
     }
 }
