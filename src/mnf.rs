@@ -805,7 +805,10 @@ impl MnfFile {
     }
 
     fn save_sub_file_zosft(&self, e: &MnfFileEntry, base_path: &str, convert_dds: bool, info: &DatSubFileInfo) -> Result<()> {
-        let name = self.zosft_name(e).unwrap_or("");
+        // ZOSFT names are stored with a leading separator (e.g. `\gamedata\lang\en.lang`); it is
+        // relative to the archive root, so strip it before checking for escapes from the output path.
+        let orig_name = self.zosft_name(e).unwrap_or("");
+        let name = orig_name.trim_start_matches(['\\', '/']);
         if has_unsafe_component(name) {
             return Err(eso_error!("\tWarning: Skipping ZOSFT filename '{}' that is outside the output path!", name));
         }
@@ -814,7 +817,7 @@ impl MnfFile {
 
         if !ensure_path_exists(&output_path) { return Err(failed("could not create output path")); }
 
-        let valid_index = self.duplicate_name_map.get(name).copied().unwrap_or(0);
+        let valid_index = self.duplicate_name_map.get(orig_name).copied().unwrap_or(0);
         if valid_index > 0 && e.index != valid_index {
             return Err(eso_debug_error!("\tWarning: Skipping duplicate file '{}' with index {}!", output_filename, e.index));
         }

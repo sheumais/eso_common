@@ -265,7 +265,7 @@ pub fn append_paths(path1: &str, path2: &str) -> String {
 
 pub fn append_filename_to_path(path: &str, filename: &str) -> String {
     let mut out = terminate_path(path);
-    out.push_str(filename.strip_prefix(['\\', '/']).unwrap_or(filename));
+    out.push_str(filename.trim_start_matches(['\\', '/']));
     out
 }
 

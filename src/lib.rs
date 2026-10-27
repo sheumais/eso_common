@@ -43,6 +43,9 @@ pub fn is_zero_u16(v: &u16) -> bool {
 pub fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
+pub fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
+}
 pub fn is_zero_i32(v: &i32) -> bool {
     *v == 0
 }
@@ -131,6 +134,12 @@ impl<R: Read + Seek> ByteReader<R> {
     pub fn read_float_le(&mut self) -> io::Result<f32> {
         let bits = self.read_dword_le()?;
         Ok(f32::from_bits(bits))
+    }
+
+    pub fn read_dword64_be(&mut self) -> io::Result<u64> {
+        let mut buf = [0u8; 8];
+        self.inner.read_exact(&mut buf)?;
+        Ok(u64::from_be_bytes(buf))
     }
 
     pub fn read_bytes(&mut self, n: usize) -> io::Result<Vec<u8>> {
